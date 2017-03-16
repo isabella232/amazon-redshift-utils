@@ -57,7 +57,9 @@ copy_stmt = """copy %s.%s
                manifest 
                encrypted
                gzip
-               delimiter '^' removequotes escape"""
+               delimiter '^' removequotes escape
+	       BLANKSASNULL
+	       REGION '%s'"""
 
 get_table_stmt = """
                  set search_path = '%s'; SELECT DISTINCT tablename FROM pg_table_def WHERE schemaname = '%s';
@@ -73,7 +75,7 @@ def conn_to_rs(host, port, db, usr, pwd, opt=options, timeout=set_timeout_stmt):
     return rs_conn
 
 def get_tables(conn, schema_name):
-    return map(lambda tup: tup[0], conn.query(get_table_stmt % (schema, schema)).getresult())
+    return map(lambda tup: tup[0], conn.query(get_table_stmt % (schema_name, schema_name)).getresult())
 
 def unload_data(conn, s3_access_credentials, master_symmetric_key, dataStagingPath, schema_name, table_name):
     print "Exporting %s.%s to %s" % (schema_name, table_name, dataStagingPath)
@@ -81,12 +83,11 @@ def unload_data(conn, s3_access_credentials, master_symmetric_key, dataStagingPa
 
 
 def copy_data(conn, s3_access_credentials, master_symmetric_key, dataStagingPath, dataStagingRegion, schema_name, table_name):
-    global copy_stmt
-    if dataStagingRegion != None:
-        copy_stmt = copy_stmt + ("\nREGION '%s'" % (dataStagingRegion))
-        
+
+    print copy_stmt % (schema_name, table_name, dataStagingPath, s3_access_credentials, master_symmetric_key, dataStagingRegion)       
+ 
     print "Importing %s.%s from %s" % (schema_name, table_name, dataStagingPath + (":%s" % (dataStagingRegion) if dataStagingRegion != None else ""))
-    conn.query(copy_stmt % (schema_name, table_name, dataStagingPath, s3_access_credentials, master_symmetric_key))
+    conn.query(copy_stmt % (schema_name, table_name, dataStagingPath, s3_access_credentials, master_symmetric_key, dataStagingRegion))
 
 
 def decrypt(b64EncodedValue):
@@ -222,14 +223,15 @@ def main(args):
     table_names = table_names or get_tables(src_conn, src_schema)
 
     for table_name in table_names: 
+	stage_path = "%s%s" % (dataStagingPath, table_name)
         print "Exporting table '%s' from Source" % (table_name)
-        unload_data(src_conn, s3_access_credentials, master_symmetric_key, dataStagingPath,
+        unload_data(src_conn, s3_access_credentials, master_symmetric_key, stage_path,
                     src_schema, table_name) 
 
         print "Importing table '%s' to Target" % (table_name)
         dest_conn = conn_to_rs(dest_host, dest_port, dest_db, dest_user,
                               dest_pwd) 
-        copy_data(dest_conn, s3_access_credentials, master_symmetric_key, dataStagingPath, dataStagingRegion,
+        copy_data(dest_conn, s3_access_credentials, master_symmetric_key, stage_path, dataStagingRegion,
                   dest_schema, table_name)
 
     src_conn.close()
